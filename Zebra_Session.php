@@ -10,6 +10,7 @@
  *  @author     Stefan Gabos <contact@stefangabos.ro>
  *  @version    2.1.10 (last revision: January 05, 2019)
  *  @copyright  (c) 2006 - 2019 Stefan Gabos
+ *  @copyright  (c) 2019 More7
  *  @license    http://www.gnu.org/licenses/lgpl-3.0.txt GNU LESSER GENERAL PUBLIC LICENSE
  *  @package    Zebra_Session
  */
@@ -23,6 +24,7 @@ class Zebra_Session {
     private $lock_to_ip;
     private $lock_to_user_agent;
     private $table_name;
+    private $readOnlySession = false;
 
     /**
      *  Constructor of class. Initializes the class and automatically calls
@@ -119,11 +121,11 @@ class Zebra_Session {
      *                                          switching into compatibility mode. So, on the first load you would have
      *                                          something like:
      *
-     *                                          <code>Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4...</code>
+     *                                          <code>Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; etc...</code>
      *
      *                                          and reloading the page you would have
      *
-     *                                          <code> Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1; Trident/4...</code>
+     *                                          <code> Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1; Trident/4.0; etc...</code>
      *
      *                                          So, if the situation asks for this, change this value to FALSE.
      *
@@ -200,12 +202,32 @@ class Zebra_Session {
      *
      *                                          Default is <i>60</i>
      *
+     *  @param  bool      $readOnlySession      (Optional) Open session in read-only mode, without blocking (no waiting for another requests
+     *                                          to finish). Any changes made to $_SESSION are not saved, although the variable can
+     *                                          be accessed and/or written normally.
+     *
+     *                                          Default is <i>false</i> (the default session behaviour).
+     *
      *  @return void
      */
-    public function __construct(&$link, $security_code, $session_lifetime = '', $lock_to_user_agent = true, $lock_to_ip = false, $gc_probability = '', $gc_divisor = '', $table_name = 'session_data', $lock_timeout = 60) {
+    public function __construct(
+        &$link,
+        $security_code,
+        $session_lifetime = '',
+        $lock_to_user_agent = true,
+        $lock_to_ip = false,
+        $gc_probability = '',
+        $gc_divisor = '',
+        $table_name = 'session_data',
+        $lock_timeout = 60,
+        $readOnlySession = false
+    )
+    {
 
         // continue if the provided link is valid
         if ($link instanceof MySQLi && $link->connect_error === null) {
+
+            $this->readOnlySession = $readOnlySession;
 
             // store the connection link
             $this->link = $link;
@@ -470,10 +492,14 @@ class Zebra_Session {
         $this->session_lock = $this->_mysql_real_escape_string('session_' . sha1($session_id));
 
         // try to obtain a lock with the given name and timeout
-        $result = $this->_mysql_query('SELECT GET_LOCK("' . $this->session_lock . '", ' . $this->_mysql_real_escape_string($this->lock_timeout) . ')');
-
-        // stop if there was an error
-        if (!$result || mysqli_num_rows($result) != 1 || !($row = mysqli_fetch_array($result)) || $row[0] != 1) throw new Exception('Zebra_Session: Could not obtain session lock!');
+        // read-only sessions do not need a lock
+        if(!$this->readOnlySession) {
+            $result = $this->_mysql_query('SELECT GET_LOCK("' . $this->session_lock . '", ' . $this->_mysql_real_escape_string($this->lock_timeout) . ')');
+            // stop if there was an error
+            if (!$result || mysqli_num_rows($result) != 1 || !($row = mysqli_fetch_array($result)) || $row[0] != 1) {
+                throw new Exception('Zebra_Session: Could not obtain session lock!');
+            }
+        }
 
         //  reads session data associated with a session id, but only if
         //  -   the session ID exists;
@@ -652,6 +678,12 @@ class Zebra_Session {
      *  @access private
      */
     function write($session_id, $session_data) {
+
+        // read-only session will not be saved
+        // any changes to the $_SESSION variable are discarded
+        if($this->readOnlySession) {
+            return true;
+        }
 
         // insert OR update session's data - this is how it works:
         // first it tries to insert a new row in the database BUT if session_id is already in the database then just
