@@ -25,6 +25,8 @@ class Zebra_Session {
     private $lock_to_user_agent;
     private $table_name;
     private $readOnlySession = false;
+    private $security_code;
+    private $session_lock;
 
     /**
      *  Constructor of class. Initializes the class and automatically calls
